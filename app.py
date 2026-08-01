@@ -6,8 +6,6 @@ import os
 import base64
 import requests
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
 
 # ==================== Page configuration ====================
 st.set_page_config(
@@ -17,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ==================== Debug toggle (off by default) ====================
+# ==================== Debug toggle ====================
 debug_mode = st.sidebar.checkbox("🔍 Show debug info", value=False)
 
 if debug_mode:
@@ -94,20 +92,6 @@ st.markdown("""
     .bmi-description { font-size: 1rem; color: rgba(0,0,0,0.7); margin-top: 0.5rem; }
     .bmi-obese .bmi-description { color: rgba(255,255,255,0.8); }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-    .stTabs [data-baseweb="tab-list"] { gap: 2rem; background: transparent; padding: 0; border-bottom: none !important; }
-    .stTabs [data-baseweb="tab"] {
-        height: 3.5rem; background: transparent !important; border: none !important;
-        border-radius: 0; color: #555; font-weight: 500; padding: 0.5rem 1.5rem; box-shadow: none !important;
-    }
-    .stTabs [data-baseweb="tab"]:hover { background: transparent !important; color: #1a237e; }
-    .stTabs [aria-selected="true"] {
-        background: transparent !important; color: #1565C0 !important; font-weight: 700 !important;
-        border: none !important; border-bottom: none !important; box-shadow: none !important;
-    }
-    .stTabs [data-baseweb="tab-highlight"] { display: block !important; height: 3px !important; background: #1A237E !important; }
-    .stTabs [role="tablist"] { border-bottom: none !important; }
-    .stTabs * { box-shadow: none !important; }
-    .bmi-chart { background: white; padding: 1rem; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin: 1rem 0; }
     .info-box { background: #f8f9fa; border-left: 4px solid #1a237e; padding: 1rem; border-radius: 10px; margin-bottom: 1rem; }
     .result-container {
         border-radius: 30px; padding: 40px 30px; min-height: 420px; height: 420px; max-height: 420px;
@@ -123,9 +107,20 @@ st.markdown("""
     }
     .meme-container img { max-height: 250px; object-fit: contain; width: 100%; border-radius: 15px; margin: 10px 0; flex-shrink: 0; }
     .section-header { font-size: 1.1rem; font-weight: 600; color: #1a237e; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0; }
-    .validation-error-box { background: #fff0f0; border-left: 4px solid #f5576c; padding: 1rem; border-radius: 10px; margin: 0.5rem 0; }
-    .validation-error-box li { color: #dc3545; margin: 0.3rem 0; }
     .stFileUploader { width: 100%; }
+    .stTabs [data-baseweb="tab-list"] { gap: 2rem; background: transparent; padding: 0; border-bottom: none !important; }
+    .stTabs [data-baseweb="tab"] {
+        height: 3.5rem; background: transparent !important; border: none !important;
+        border-radius: 0; color: #555; font-weight: 500; padding: 0.5rem 1.5rem; box-shadow: none !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover { background: transparent !important; color: #1a237e; }
+    .stTabs [aria-selected="true"] {
+        background: transparent !important; color: #1565C0 !important; font-weight: 700 !important;
+        border: none !important; border-bottom: none !important; box-shadow: none !important;
+    }
+    .stTabs [data-baseweb="tab-highlight"] { display: block !important; height: 3px !important; background: #1A237E !important; }
+    .stTabs [role="tablist"] { border-bottom: none !important; }
+    .stTabs * { box-shadow: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -199,10 +194,8 @@ def validate_age(value):
 # ==================== Load GIF Memes ====================
 @st.cache_data
 def load_memes():
-    """Load memes from local folder or use default online fallbacks"""
     high_risk_gifs, low_risk_gifs = [], []
     
-    # Default fallback URLs
     default_high_risk = [
         "https://media.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif",
         "https://media.giphy.com/media/l0ExdMHUDKteztyfe/giphy.gif",
@@ -214,7 +207,6 @@ def load_memes():
         "https://media.giphy.com/media/26tn33aiTi1jkl6H6/giphy.gif",
     ]
     
-    # Check for organized folder structure
     if os.path.exists("memes/high_risk"):
         high_risk_gifs = [os.path.join("memes/high_risk", f) 
                          for f in os.listdir("memes/high_risk") 
@@ -225,7 +217,6 @@ def load_memes():
                         for f in os.listdir("memes/low_risk") 
                         if any(f.lower().endswith(ext) for ext in ['.gif', '.jpg', '.jpeg', '.png', '.webp'])]
     
-    # Use defaults if no local images found
     if not high_risk_gifs:
         high_risk_gifs = default_high_risk
     if not low_risk_gifs:
@@ -237,14 +228,13 @@ high_risk_gifs, low_risk_gifs = load_memes()
 
 @st.cache_data(show_spinner=False)
 def get_meme_img_html(selected_meme):
-    """Load meme image with proper error handling"""
     if not selected_meme:
         return '<p style="color:#999;">No meme available</p>'
     
     try:
         if selected_meme.startswith("http"):
-            # For online URLs, try to fetch and embed
             try:
+                import requests
                 response = requests.get(selected_meme, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
                 if response.status_code == 200:
                     content_type = response.headers.get("Content-Type", "image/gif")
@@ -275,15 +265,23 @@ def get_meme_img_html(selected_meme):
 def load_models():
     missing = [f for f in ["diabetes_model.pkl", "scaler.pkl", "imputer.pkl"] if not os.path.exists(f)]
     if missing:
-        st.error(f"❌ Missing required file(s): {', '.join(missing)}. "
-                 "Please run the training code first to generate these files.")
+        st.error(f"❌ Missing required file(s): {', '.join(missing)}. Please run the training code first.")
         return None, None, None
 
     try:
-        model = pickle.load(open("diabetes_model.pkl", "rb"))
-        scaler = pickle.load(open("scaler.pkl", "rb"))
-        imputer = pickle.load(open("imputer.pkl", "rb"))
-        st.success("✅ Model, scaler, and imputer loaded successfully.")
+        # Load model
+        with open("diabetes_model.pkl", "rb") as f:
+            model = pickle.load(f)
+        
+        # Load scaler
+        with open("scaler.pkl", "rb") as f:
+            scaler = pickle.load(f)
+        
+        # Load imputer
+        with open("imputer.pkl", "rb") as f:
+            imputer = pickle.load(f)
+        
+        st.success("✅ Model, scaler, and imputer loaded successfully!")
         return model, scaler, imputer
     except Exception as e:
         st.error(f"❌ Error loading model files: {str(e)}")
@@ -309,21 +307,26 @@ def reset_app():
     st.session_state.reset_counter += 1
 
 def run_prediction(Pregnancies, Glucose, BloodPressure, SkinThickness, Insulin, BMI, DiabetesPedigreeFunction, Age):
-    """Runs the ACTUAL trained pipeline: impute -> scale -> predict."""
-    input_data = pd.DataFrame(
+    """Runs the trained pipeline: impute -> scale -> predict."""
+    # Create DataFrame with the input data
+    input_df = pd.DataFrame(
         [[Pregnancies, Glucose, BloodPressure, SkinThickness, Insulin, BMI, DiabetesPedigreeFunction, Age]],
-        columns=["Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
+        columns=["Pregnancies", "Glucose", "BloodPressure", "SkinThickness", 
                  "Insulin", "BMI", "DiabetesPedigreeFunction", "Age"]
     )
     
-    # Impute zeros with median values
+    # Replace 0 with NaN for columns that should be imputed
     impute_cols = ["Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI", "DiabetesPedigreeFunction"]
     for col in impute_cols:
-        if col in input_data.columns and input_data[col].iloc[0] == 0:
-            input_data[col] = imputer[col]  # imputer is a dict with median values
+        input_df[col] = input_df[col].replace(0, np.nan)
+    
+    # Use the imputer to fill missing values
+    input_imputed = imputer.transform(input_df)
     
     # Scale the data
-    input_scaled = scaler.transform(input_data)
+    input_scaled = scaler.transform(input_imputed)
+    
+    # Predict
     result = model.predict(input_scaled)
     probability = model.predict_proba(input_scaled)
     return result[0], probability[0]
@@ -363,7 +366,7 @@ def process_uploaded_file(uploaded_file):
                 if not found:
                     missing_cols.append(col)
         if missing_cols:
-            return None, f"Missing columns: {', '.join(missing_cols)}. Required columns: {', '.join(required_columns)}"
+            return None, f"Missing columns: {', '.join(missing_cols)}"
 
         first_row = df.iloc[0]
         data = {

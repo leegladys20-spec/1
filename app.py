@@ -6,6 +6,8 @@ import os
 import base64
 import requests
 import numpy as np
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
 
 # ==================== Page configuration ====================
 st.set_page_config(
@@ -21,7 +23,7 @@ debug_mode = st.sidebar.checkbox("🔍 Show debug info", value=False)
 if debug_mode:
     st.sidebar.header("Debug Information")
     st.sidebar.write(f"**Current Directory:** `{os.getcwd()}`")
-    model_files = ['diabetes_model.pkl', 'scaler.pkl', 'imputer.pkl']
+    model_files = ['diabetes_model.pkl', 'scaler.pkl', 'imputer.pkl', 'diabetes.csv']
     st.sidebar.write("**Model Files:**")
     for file in model_files:
         if os.path.exists(file):
@@ -29,9 +31,6 @@ if debug_mode:
             st.sidebar.write(f"  ✅ `{file}` ({size:.1f} KB)")
         else:
             st.sidebar.write(f"  ❌ `{file}` NOT FOUND")
-    all_pkl = [f for f in os.listdir('.') if f.endswith('.pkl')]
-    if all_pkl:
-        st.sidebar.write(f"**All PKL files:** {', '.join(all_pkl)}")
 
 # Custom CSS
 st.markdown("""
@@ -130,7 +129,7 @@ def validate_pregnancies(value):
         return False, "Pregnancies cannot be negative."
     elif value > 20: 
         return False, "Pregnancies should be 20 or less."
-    return True, "Valid"
+    return True, "✅ Valid"
 
 def validate_glucose(value):
     if value < 0: 
@@ -138,8 +137,8 @@ def validate_glucose(value):
     elif value > 300: 
         return False, "Glucose level must be between 0 and 300 mg/dL."
     elif value == 0:
-        return True, "0 will be replaced with the dataset median."
-    return True, "Valid"
+        return True, "⚠️ Will be replaced with median (120 mg/dL)"
+    return True, "✅ Valid"
 
 def validate_blood_pressure(value):
     if value < 0: 
@@ -147,8 +146,8 @@ def validate_blood_pressure(value):
     elif value > 180: 
         return False, "Blood pressure must be between 0 and 180 mm Hg."
     elif value == 0:
-        return True, "0 will be replaced with the dataset median."
-    return True, "Valid"
+        return True, "⚠️ Will be replaced with median (72 mm Hg)"
+    return True, "✅ Valid"
 
 def validate_skin_thickness(value):
     if value < 0: 
@@ -156,15 +155,15 @@ def validate_skin_thickness(value):
     elif value > 99: 
         return False, "Skin thickness must be between 0 and 99 mm."
     elif value == 0:
-        return True, "0 will be replaced with the dataset median."
-    return True, "Valid"
+        return True, "⚠️ Will be replaced with median (23 mm)"
+    return True, "✅ Valid"
 
 def validate_insulin(value):
     if value == 0: 
-        return True, "0 will be replaced with the dataset median."
+        return True, "⚠️ Will be replaced with median (30 μU/ml)"
     elif value < 15 or value > 900: 
         return False, "Insulin can be 0 or between 15 and 900."
-    return True, "Valid"
+    return True, "✅ Valid"
 
 def validate_bmi(value):
     if value < 0: 
@@ -172,8 +171,8 @@ def validate_bmi(value):
     elif value > 70.0: 
         return False, "BMI must be between 0 and 70.0."
     elif value == 0:
-        return True, "0 will be replaced with the dataset median."
-    return True, "Valid"
+        return True, "⚠️ Will be replaced with median (32.0)"
+    return True, "✅ Valid"
 
 def validate_diabetes_pedigree(value):
     if value < 0: 
@@ -181,15 +180,15 @@ def validate_diabetes_pedigree(value):
     elif value > 2.5: 
         return False, "Diabetes pedigree must be between 0 and 2.5."
     elif value == 0:
-        return True, "0 will be replaced with the dataset median."
-    return True, "Valid"
+        return True, "⚠️ Will be replaced with median (0.37)"
+    return True, "✅ Valid"
 
 def validate_age(value):
     if value < 0: 
         return False, "Age cannot be negative."
     elif value > 100: 
         return False, "Age must be between 0 and 100 years."
-    return True, "Valid"
+    return True, "✅ Valid"
 
 # ==================== Load GIF Memes ====================
 @st.cache_data
@@ -234,7 +233,6 @@ def get_meme_img_html(selected_meme):
     try:
         if selected_meme.startswith("http"):
             try:
-                import requests
                 response = requests.get(selected_meme, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
                 if response.status_code == 200:
                     content_type = response.headers.get("Content-Type", "image/gif")
@@ -263,11 +261,15 @@ def get_meme_img_html(selected_meme):
 # ==================== Load Models ====================
 @st.cache_resource
 def load_models():
-    missing = [f for f in ["diabetes_model.pkl", "scaler.pkl", "imputer.pkl"] if not os.path.exists(f)]
-    if missing:
-        st.error(f"❌ Missing required file(s): {', '.join(missing)}. Please run the training code first.")
+    # Check if model and scaler exist
+    if not os.path.exists("diabetes_model.pkl"):
+        st.error("❌ diabetes_model.pkl not found. Please run the training code first.")
         return None, None, None
-
+    
+    if not os.path.exists("scaler.pkl"):
+        st.error("❌ scaler.pkl not found. Please run the training code first.")
+        return None, None, None
+    
     try:
         # Load model
         with open("diabetes_model.pkl", "rb") as f:
@@ -277,14 +279,48 @@ def load_models():
         with open("scaler.pkl", "rb") as f:
             scaler = pickle.load(f)
         
-        # Load imputer
-        with open("imputer.pkl", "rb") as f:
-            imputer = pickle.load(f)
+        # Try to load imputer, or create a new one from diabetes.csv
+        imputer = None
         
-        st.success("✅ Model, scaler, and imputer loaded successfully!")
-        return model, scaler, imputer
+        if os.path.exists("imputer.pkl"):
+            try:
+                with open("imputer.pkl", "rb") as f:
+                    imputer = pickle.load(f)
+                # Test if imputer works
+                test_data = pd.DataFrame([[0, 0, 0, 0, 0, 0, 0, 0]], 
+                                        columns=["Pregnancies", "Glucose", "BloodPressure", "SkinThickness", 
+                                                "Insulin", "BMI", "DiabetesPedigreeFunction", "Age"])
+                test_imputed = imputer.transform(test_data)
+                st.success("✅ Model, scaler, and imputer loaded successfully!")
+                return model, scaler, imputer
+            except Exception as e:
+                st.warning(f"⚠️ imputer.pkl is incompatible ({str(e)}). Creating a new imputer from diabetes.csv...")
+        
+        # Create new imputer from diabetes.csv
+        if os.path.exists("diabetes.csv"):
+            df = pd.read_csv("diabetes.csv")
+            impute_cols = ["Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI", "DiabetesPedigreeFunction"]
+            
+            # Replace 0 with NaN
+            for col in impute_cols:
+                df[col] = df[col].replace(0, np.nan)
+            
+            # Create and fit imputer
+            imputer = SimpleImputer(strategy='median')
+            imputer.fit(df[impute_cols])
+            
+            # Save for future use
+            with open("imputer.pkl", "wb") as f:
+                pickle.dump(imputer, f)
+            
+            st.success("✅ Created new imputer from diabetes.csv")
+            return model, scaler, imputer
+        else:
+            st.error("❌ diabetes.csv not found. Cannot create imputer.")
+            return None, None, None
+            
     except Exception as e:
-        st.error(f"❌ Error loading model files: {str(e)}")
+        st.error(f"❌ Error loading models: {str(e)}")
         return None, None, None
 
 model, scaler, imputer = load_models()
@@ -308,7 +344,7 @@ def reset_app():
 
 def run_prediction(Pregnancies, Glucose, BloodPressure, SkinThickness, Insulin, BMI, DiabetesPedigreeFunction, Age):
     """Runs the trained pipeline: impute -> scale -> predict."""
-    # Create DataFrame with the input data
+    # Create DataFrame
     input_df = pd.DataFrame(
         [[Pregnancies, Glucose, BloodPressure, SkinThickness, Insulin, BMI, DiabetesPedigreeFunction, Age]],
         columns=["Pregnancies", "Glucose", "BloodPressure", "SkinThickness", 
@@ -318,7 +354,8 @@ def run_prediction(Pregnancies, Glucose, BloodPressure, SkinThickness, Insulin, 
     # Replace 0 with NaN for columns that should be imputed
     impute_cols = ["Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI", "DiabetesPedigreeFunction"]
     for col in impute_cols:
-        input_df[col] = input_df[col].replace(0, np.nan)
+        if col in input_df.columns:
+            input_df[col] = input_df[col].replace(0, np.nan)
     
     # Use the imputer to fill missing values
     input_imputed = imputer.transform(input_df)
@@ -392,7 +429,7 @@ with tab1:
     st.markdown('<div class="subtitle-text">Early detection can save lives. Enter patient details below for risk assessment.</div>', unsafe_allow_html=True)
 
     if not models_ready:
-        st.warning("⚠️ Prediction is disabled until the model files are available. Please run the training code first.")
+        st.warning("⚠️ Prediction is disabled. Please ensure model files are available.")
 
     st.markdown("### Select Input Method")
     col_mode1, col_mode2 = st.columns(2)
@@ -425,7 +462,8 @@ with tab1:
                                                help="Number of times pregnant (0-20)", key=f"preg_{st.session_state.reset_counter}")
                 if st.session_state.show_validation:
                     v, m = validate_pregnancies(Pregnancies)
-                    st.markdown(f'<div class="validation-message {"validation-success" if v else "validation-error"}">{m}</div>', unsafe_allow_html=True)
+                    cls = "validation-success" if v else "validation-error"
+                    st.markdown(f'<div class="validation-message {cls}">{m}</div>', unsafe_allow_html=True)
                 else:
                     st.markdown('<div class="validation-message-empty"></div>', unsafe_allow_html=True)
 
@@ -473,8 +511,7 @@ with tab1:
                 if st.session_state.show_validation:
                     v, m = validate_bmi(BMI)
                     cls = "validation-warning" if (v and BMI == 0) else ("validation-success" if v else "validation-error")
-                    msg = "0 will be imputed with median" if (v and BMI == 0) else m
-                    st.markdown(f'<div class="validation-message {cls}">{msg}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="validation-message {cls}">{m}</div>', unsafe_allow_html=True)
                 else:
                     st.markdown('<div class="validation-message-empty"></div>', unsafe_allow_html=True)
 
@@ -492,7 +529,8 @@ with tab1:
                                        help="Age in years - Range: 0-100", key=f"age_{st.session_state.reset_counter}")
                 if st.session_state.show_validation:
                     v, m = validate_age(Age)
-                    st.markdown(f'<div class="validation-message {"validation-success" if v else "validation-error"}">{m}</div>', unsafe_allow_html=True)
+                    cls = "validation-success" if v else "validation-error"
+                    st.markdown(f'<div class="validation-message {cls}">{m}</div>', unsafe_allow_html=True)
                 else:
                     st.markdown('<div class="validation-message-empty"></div>', unsafe_allow_html=True)
 
@@ -519,6 +557,21 @@ with tab1:
                 </ul>
             </div>
             """, unsafe_allow_html=True)
+
+            # Show imputation info
+            with st.expander("ℹ️ Imputation Information"):
+                st.markdown("""
+                **When you enter 0 for these fields, they will be replaced with median values:**
+                
+                | Feature | Median Value |
+                |---------|--------------|
+                | Glucose | 120 mg/dL |
+                | Blood Pressure | 72 mm Hg |
+                | Skin Thickness | 23 mm |
+                | Insulin | 30 μU/ml |
+                | BMI | 32.0 |
+                | Diabetes Pedigree | 0.37 |
+                """)
 
         st.markdown("<br>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
@@ -592,7 +645,7 @@ with tab1:
                     if not is_valid:
                         st.markdown(f'<div class="validation-message validation-error">❌ {field}: {message}</div>', unsafe_allow_html=True)
                         has_errors, all_valid = True, False
-                    elif "imputed" in message.lower() or "median" in message.lower():
+                    elif "Will be replaced" in message or "imputed" in message.lower():
                         st.markdown(f'<div class="validation-message validation-warning">⚠️ {field}: {message}</div>', unsafe_allow_html=True)
                         warning_fields.append(field)
                     else:
